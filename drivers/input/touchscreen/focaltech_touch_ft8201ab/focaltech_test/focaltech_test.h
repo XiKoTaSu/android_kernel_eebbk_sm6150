@@ -31,13 +31,11 @@
 #include "../focaltech_core.h"
 #include "focaltech_test_ini.h"
 
-
 /*****************************************************************************
 * Macro definitions using #define
 *****************************************************************************/
-#define FTS_SELF_TEST                           ""
-#define FTS_INI_FILE_PATH                       "/vendor/firmware/"
-#define FTS_DATA_SAVE_PATH						"/sdcard/"
+#define FTS_INI_FILE_PATH                       "/system/etc/"
+#define FTS_TEST_FILE_PATH                      "/sdcard/"
 #define FTS_CSV_FILE_NAME                       "testdata.csv"
 #define FTS_TXT_FILE_NAME                       "testresult.txt"
 #define false 0
@@ -102,6 +100,7 @@ Test Status
 #define FACTORY_REG_LCD_NOISE_TTHR              0x14
 #define FACTORY_REG_OPEN_START                  0x15
 #define FACTORY_REG_OPEN_STATE                  0x16
+#define FACTORY_REG_OPEN_ADDR                   0xCF
 #define FACTORY_REG_OPEN_IDLE                   0x03
 #define FACTORY_REG_OPEN_BUSY                   0x01
 #define FACTORY_REG_CB_ADDR_H                   0x18
@@ -131,8 +130,10 @@ Test Status
 #define FACTORY_REG_OPEN_TEST_EN                0xA0
 #define FACTORY_REG_RAWDATA_TARGET              0xCA
 
+
 /* mc_sc */
 #define FACTORY_REG_FRE_LIST                    0x0A
+#define FACTORY_REG_DATA_TYPE                   0x5B
 #define FACTORY_REG_NORMALIZE                   0x16
 #define FACTORY_REG_RAWDATA_ADDR_MC_SC          0x36
 #define FACTORY_REG_PATTERN                     0x53
@@ -233,14 +234,15 @@ struct incell_threshold_b {
     int lcdnoise_frame;
     int lcdnoise_coefficient;
     int lcdnoise_coefficient_vkey;
+    int open_diff_min;
+    int open_diff_max;
     int open_nmos;
     int keyshort_k1;
     int keyshort_cb_max;
     int rawdata2_min;
     int rawdata2_max;
     int mux_open_cb_min;
-	int open_delta_V;
-	int open_diff_min;
+    int open_delta_V;
 };
 
 struct incell_threshold {
@@ -465,13 +467,15 @@ struct fts_test {
 };
 
 struct test_funcs {
-    u64 ctype[FTX_MAX_COMPATIBLE_TYPE];
+    u16 ctype[FTS_MAX_COMPATIBLE_TYPE];
     enum test_hw_type hwtype;
     int startscan_mode;
     int key_num_total;
     bool rawdata2_support;
     bool force_touch;
     bool mc_sc_short_v2;
+    bool raw_u16;
+    bool cb_high_support;
     int (*param_init)(void);
     int (*init)(void);
     int (*start_test)(void);
@@ -548,9 +552,8 @@ enum csv_itemcode_sc {
 /*****************************************************************************
 * Global variable or extern global variabls/functions
 *****************************************************************************/
-extern struct test_funcs test_func_ft8006sp;
-extern struct test_funcs test_func_ft8722;
-
+extern struct test_funcs test_func_ft8201;
+extern struct test_funcs test_func_ft8201ab;
 
 extern struct fts_test *fts_ftest;
 
@@ -587,9 +590,6 @@ void *fts_malloc(size_t size);
 void fts_free_proc(void *p);
 void fts_test_save_data(char *name, int code, int *data, int datacnt,
                         bool mc_sc, bool key, bool result);
-
-
-
 
 #define fts_malloc_r(p, size) do {\
     if (NULL == p) {\

@@ -61,10 +61,7 @@
 #include <linux/sched.h>
 #include <linux/kthread.h>
 #include <linux/dma-mapping.h>
-#include "linux/hardware_info.h"
 #include "focaltech_common.h"
-
-
 
 /*****************************************************************************
 * Private constant and macro definitions using #define
@@ -101,16 +98,10 @@
 #define EVENT_UP(flag)                      (FTS_TOUCH_UP == flag)
 #define EVENT_NO_DOWN(data)                 (!data->point_num)
 
-#define FTX_MAX_COMPATIBLE_TYPE             4
-#define FTX_MAX_COMMMAND_LENGTH             16
-
-enum _IC_TYPE {
-    IC_TYPE_FT8006S_AA = 0x8632,
-    IC_TYPE_FT8722 = 0x8722,
-};
+#define FTS_MAX_COMPATIBLE_TYPE             4
+#define FTS_MAX_COMMMAND_LENGTH             16
 
 
-#undef CONFIG_DRM
 /*****************************************************************************
 *  Alternative mode (When something goes wrong, the modules may be able to solve the problem.)
 *****************************************************************************/
@@ -120,13 +111,8 @@ enum _IC_TYPE {
 #define FTS_PATCH_COMERR_PM                     0
 #define FTS_TIMEOUT_COMERR_PM                   700
 
-enum _ex_mode {
-    MODE_GLOVE = 0,
-    MODE_COVER,
-    MODE_CHARGER,
-    MODE_EARPHONE,
-    MODE_EDGE,
-};
+#define FTS_HIGH_REPORT                         0
+#define FTS_SIZE_DEFAULT                        15
 
 
 /*****************************************************************************
@@ -136,7 +122,7 @@ struct ftxxxx_proc {
     struct proc_dir_entry *proc_entry;
     u8 opmode;
     u8 cmd_len;
-    u8 cmd[FTX_MAX_COMMMAND_LENGTH];
+    u8 cmd[FTS_MAX_COMMMAND_LENGTH];
 };
 
 struct fts_ts_platform_data {
@@ -165,11 +151,25 @@ struct ts_event {
     int area;
 };
 
+struct pen_event {
+    int inrange;
+    int tip;
+    int x;      /*x coordinate */
+    int y;      /*y coordinate */
+    int p;      /* pressure */
+    int flag;   /* touch event flag: 0 -- down; 1-- up; 2 -- contact */
+    int id;     /*touch ID */
+    int tilt_x;
+    int tilt_y;
+    int tool_type;
+};
+
 struct fts_ts_data {
     struct i2c_client *client;
     struct spi_device *spi;
     struct device *dev;
     struct input_dev *input_dev;
+    struct input_dev *pen_dev;
     struct fts_ts_platform_data *pdata;
     struct ts_ic_info ic_info;
     struct workqueue_struct *ts_workqueue;
@@ -181,6 +181,7 @@ struct fts_ts_data {
     spinlock_t irq_lock;
     struct mutex report_mutex;
     struct mutex bus_lock;
+    unsigned long intr_jiffies;
     int irq;
     int log_level;
     int fw_is_running;      /* confirm fw is running when using spi:default 0 */
@@ -196,10 +197,9 @@ struct fts_ts_data {
     bool glove_mode;
     bool cover_mode;
     bool charger_mode;
-    bool earphone_mode;
-    u8 edge_mode;
-    int oplus_edge_mode;
     bool gesture_mode;      /* gesture enable or disable, default: disable */
+    bool prc_mode;
+    struct pen_event pevent;
     /* multi-touch */
     struct ts_event *events;
     u8 *bus_tx_buf;
@@ -211,7 +211,6 @@ struct fts_ts_data {
     int key_state;
     int touch_point;
     int point_num;
-	int ic_type;
     struct regulator *vdd;
     struct regulator *vcc_i2c;
 #if FTS_PINCTRL_EN
@@ -225,10 +224,6 @@ struct fts_ts_data {
 #elif defined(CONFIG_HAS_EARLYSUSPEND)
     struct early_suspend early_suspend;
 #endif
-	struct notifier_block notifier_earphone;
-	struct work_struct earphone_work_queue;
-	struct notifier_block notifier_usb;
-	struct work_struct usb_work_queue;
 };
 
 enum _FTS_BUS_TYPE {
@@ -279,11 +274,6 @@ int fts_esdcheck_suspend(void);
 int fts_esdcheck_resume(void);
 #endif
 
-/* Production test */
-#if FTS_TEST_EN
-int fts_test_init(struct fts_ts_data *ts_data);
-int fts_test_exit(struct fts_ts_data *ts_data);
-#endif
 
 /* Point Report Check*/
 #if FTS_POINT_REPORT_CHECK_EN
@@ -295,13 +285,12 @@ void fts_prc_queue_work(struct fts_ts_data *ts_data);
 /* FW upgrade */
 int fts_fwupg_init(struct fts_ts_data *ts_data);
 int fts_fwupg_exit(struct fts_ts_data *ts_data);
-int fts_fw_resume(bool need_reset);
-int fts_fw_recovery(void);
 int fts_upgrade_bin(char *fw_name, bool force);
 int fts_enter_test_environment(bool test_state);
 
 /* Other */
 int fts_reset_proc(int hdelayms);
+int fts_check_cid(struct fts_ts_data *ts_data, u8 id_h);
 int fts_wait_tp_to_valid(void);
 void fts_release_all_finger(void);
 void fts_tp_state_recovery(struct fts_ts_data *ts_data);
@@ -311,18 +300,4 @@ int fts_ex_mode_recovery(struct fts_ts_data *ts_data);
 
 void fts_irq_disable(void);
 void fts_irq_enable(void);
-void fts_earphone_mode_switch(int status);
-void fts_charger_mode_switch(int status);
-void  get_tp_fw_ver(void);
-void fts_fw_upgrade_by_request_firmware(char *name,int count);
-int fts_fw_download(const u8 *buf, u32 len, bool need_reset);
-void fwupg_by_by_request_firmware(char *name,int count);
-void fts_edge_mode_set(char *buf,int cnt);
-int fts_get_headset_mode_status(void);
-int fts_get_charge_mode_status(void);
-
-
-
-
-
 #endif /* __LINUX_FOCALTECH_CORE_H__ */

@@ -44,10 +44,8 @@
 struct fts_test *fts_ftest;
 
 struct test_funcs *test_func_list[] = {
-    &test_func_ft8006sp,
-};
-struct test_funcs *test_func_list_fts8722[] = {
-	&test_func_ft8722,
+    &test_func_ft8201,
+    &test_func_ft8201ab,
 };
 
 /*****************************************************************************
@@ -57,54 +55,6 @@ struct test_funcs *test_func_list_fts8722[] = {
 /*****************************************************************************
 * functions body
 *****************************************************************************/
-
-extern int ft8006saa;
-
-/* add for hq test*/
-#define FTS_PROC_TOUCHPANEL_FOLDER "touchpanel"
-struct proc_dir_entry *fts_proc_touchpanel_dir;
-
-#define FTS_PROC_BASELINE_TEST_FILE	"baseline_test"
-struct proc_dir_entry *fts_proc_baseline_test_file;
-
-#define FTS_PROC_BACKSCREEN_BASELINE_FILE	"black_screen_test"
-struct proc_dir_entry *fts_proc_backscreen_baseline_file;
-
-#define FTS_PROC_OPLUS_TP_DIRECTION	"oplus_tp_direction"
-struct proc_dir_entry *fts_proc_oplus_tp_direction;
-
-struct proc_dir_entry *fts_proc_debug_infor_dir = NULL;
-#define FTS_PROC_DEBUG_INFO_FOLDER	"debug_info"
- 
-#define FTS_PROC_DELTA_O_FILE "delta"
-struct proc_dir_entry *fts_proc_delta_o_file = NULL;
-
-#define FTS_PROC_DATA_LIMIT_FILE	"data_limit"
- struct proc_dir_entry *fts_proc_data_limit_file = NULL;
-
-
-
-
- int ito_self_test = 0;
- #define FTS_GET_TP_DIFFER
-
-#ifdef FTS_GET_TP_DIFFER
-#define ERROR_CODE_OK                           0x00
-#define ERROR_CODE_INVALID_COMMAND              0x02
-#define ERROR_CODE_INVALID_PARAM                0x03
-#define ERROR_CODE_WAIT_RESPONSE_TIMEOUT        0x07
-#define ERROR_CODE_COMM_ERROR                   0x0c
-#define ERROR_CODE_ALLOCATE_BUFFER_ERROR        0x0d
- 
-//#define FTS_PROC_TP_DIFFER "fts_tp_differ"
-//#define FTS_PROC_TP_rawdata "fts_tp_rawdata"
- 
-// static struct proc_dir_entry *tp_differ_proc;
-// static struct proc_dir_entry *tp_rawdata_proc;
-#endif
-
-
-
 void sys_delay(int ms)
 {
     msleep(ms);
@@ -243,9 +193,9 @@ int fts_test_read(u8 addr, u8 *readbuf, int readlen)
             packet_length = packet_remainder;
         }
 
-        ret = fts_test_bus_read(&addr, 1, &readbuf[offset],
-                                packet_length);
 
+        ret = fts_test_bus_read(NULL, 0, &readbuf[offset],
+                                packet_length);
         if (ret < 0) {
             FTS_TEST_ERROR("read buffer fail");
             return ret;
@@ -425,6 +375,36 @@ read_massdata_err:
     return ret;
 }
 
+int read_mass_data_u16(u8 addr, int byte_num, int *buf)
+{
+    int ret = 0;
+    int i = 0;
+    u8 *data = NULL;
+
+    data = (u8 *)fts_malloc(byte_num * sizeof(u8));
+    if (NULL == data) {
+        FTS_TEST_SAVE_ERR("mass data buffer malloc fail\n");
+        return -ENOMEM;
+    }
+
+    /* read rawdata buffer */
+    FTS_TEST_INFO("mass data len:%d", byte_num);
+    ret = fts_test_read(addr, data, byte_num);
+    if (ret < 0) {
+        FTS_TEST_SAVE_ERR("read mass data fail\n");
+        goto read_massdata_err;
+    }
+
+    for (i = 0; i < byte_num; i = i + 2) {
+        buf[i >> 1] = (int)(u16)((data[i] << 8) + data[i + 1]);
+    }
+
+    ret = 0;
+read_massdata_err:
+    fts_free(data);
+    return ret;
+}
+
 int short_get_adcdata_incell(u8 retval, u8 ch_num, int byte_num, int *adc_buf)
 {
     int ret = 0;
@@ -551,6 +531,7 @@ int start_scan(void)
 }
 
 static int read_rawdata(
+    struct fts_test *tdata,
     u8 off_addr,
     u8 off_val,
     u8 rawdata_addr,
@@ -566,7 +547,10 @@ static int read_rawdata(
         return ret;
     }
 
-    ret = read_mass_data(rawdata_addr, byte_num, data);
+    if (tdata->func->raw_u16)
+        ret = read_mass_data_u16(rawdata_addr, byte_num, data);
+    else
+        ret = read_mass_data(rawdata_addr, byte_num, data);
     if (ret < 0) {
         FTS_TEST_SAVE_ERR("read rawdata fail\n");
         return ret;
@@ -619,7 +603,7 @@ int get_rawdata(int *data)
     }
 
     byte_num = tdata->node.node_num * 2;
-    ret = read_rawdata(addr, val, rawdata_addr, byte_num, data);
+    ret = read_rawdata(tdata, addr, val, rawdata_addr, byte_num, data);
     if (ret < 0) {
         FTS_TEST_SAVE_ERR("read rawdata fail\n");
         return ret;
@@ -782,13 +766,11 @@ int get_cb_sc(int byte_num, int *cb_buf, enum byte_mode mode)
             goto cb_err;
         }
 
-        if (IC_HW_MC_SC == tdata->func->hwtype) {
-            if (offset >= 256) {
-                ret = fts_test_write_reg(off_h_addr, offset >> 8);
-                if (ret < 0) {
-                    FTS_TEST_SAVE_ERR("write cb_h addr offset fail\n");
-                    goto cb_err;
-                }
+        if (tdata->func->cb_high_support) {
+            ret = fts_test_write_reg(off_h_addr, offset >> 8);
+            if (ret < 0) {
+                FTS_TEST_SAVE_ERR("write cb_h addr offset fail\n");
+                goto cb_err;
             }
         }
 
@@ -1037,7 +1019,7 @@ int get_rawdata_mc_sc(enum wp_type wp, int *data)
         byte_num = 4 * 2;
     }
 
-    ret = read_rawdata(addr, val, rawdata_addr, byte_num, data);
+    ret = read_rawdata(tdata, addr, val, rawdata_addr, byte_num, data);
     if (ret < 0) {
         FTS_TEST_SAVE_ERR("read rawdata fail\n");
         return ret;
@@ -1203,7 +1185,8 @@ static int fts_test_save_test_data(char *file_name, char *data_buf, int len)
 
     FTS_TEST_FUNC_ENTER();
     memset(filepath, 0, sizeof(filepath));
-    snprintf(filepath, FILE_NAME_LENGTH, "%s%s", FTS_DATA_SAVE_PATH, file_name);
+    snprintf(filepath, FILE_NAME_LENGTH, "%s%s", FTS_TEST_FILE_PATH, file_name);
+    FTS_INFO("save test data to %s", filepath);
     if (NULL == pfile) {
         pfile = filp_open(filepath, O_TRUNC | O_CREAT | O_RDWR, 0);
     }
@@ -2052,7 +2035,7 @@ static int fts_test_start(void)
  * warning - need disable irq & esdcheck before call this function
  *
  */
-static int fts_test_entry(char *ini_file_name,struct seq_file *s, void *v)
+static int fts_test_entry(char *ini_file_name)
 {
     int ret = 0;
 
@@ -2064,7 +2047,7 @@ static int fts_test_entry(char *ini_file_name,struct seq_file *s, void *v)
     }
 
     /*Read parse configuration file*/
-    FTS_TEST_INFO("ini_file_name:%s\n", ini_file_name);
+    FTS_TEST_SAVE_INFO("ini_file_name:%s\n", ini_file_name);
     ret = fts_test_get_testparams(ini_file_name);
     if (ret < 0) {
         FTS_TEST_ERROR("get testparam fail");
@@ -2073,14 +2056,10 @@ static int fts_test_entry(char *ini_file_name,struct seq_file *s, void *v)
 
     /* Start testing according to the test configuration */
     if (true == fts_test_start()) {
-		seq_puts(s,"0 errors. All test passed.\n");
-		printk("kaoshan %s %d ###\n",__func__,__LINE__);
-        FTS_TEST_INFO("\n\n=======Tp test pass.\n");
+        FTS_TEST_SAVE_INFO("\n\n=======Tp test pass.\n");
         fts_ftest->result = true;
     } else {
-		printk("kaoshan %s %d ###\n",__func__,__LINE__);
-		seq_puts(s,"MP test fail.\n");
-        FTS_TEST_ERROR("\n\n=======Tp test failure.\n");
+        FTS_TEST_SAVE_INFO("\n\n=======Tp test failure.\n");
         fts_ftest->result = false;
 #if defined(TEST_SAVE_FAIL_RESULT) && TEST_SAVE_FAIL_RESULT
         do_gettimeofday(&(fts_ftest->tv));
@@ -2094,704 +2073,23 @@ test_err:
     return ret;
 }
 
-
-
-int fts_self_test(struct seq_file *s, void *v)
-{
-    int ret = 0;
-    struct fts_ts_data *ts_data = fts_data;
-    struct input_dev *input_dev;
-	
-
-    if (ito_self_test) {
-        FTS_INFO("In suspend, no test, return now");
-        return -EINVAL;
-    }
-	ito_self_test = 1;
-
-    input_dev = ts_data->input_dev;
-    FTS_TEST_DBG("get test fw");
-
-    mutex_lock(&input_dev->mutex);
-	ito_self_test = 1;
-    fts_irq_disable();
-#if defined(FTS_ESDCHECK_EN) && (FTS_ESDCHECK_EN)
-    fts_esdcheck_switch(DISABLE);
-#endif
-	printk("kaoshan  set  environment start %s %d ###\n",__func__,__LINE__);
-
-    ret = fts_enter_test_environment(1);
-	udelay(200);
-    if (ret < 0) {
-        FTS_ERROR("enter test environment fail");
-    } else {
-
-   if(ts_data->ic_type == IC_TYPE_FT8006S_AA){
-
-	    if(ft8006saa)
-	    	fts_test_entry(FTS8006SAA_SELF_TEST_INI,s,v);
-	    else
-	    	fts_test_entry(FTS_SELF_TEST_INI,s,v);
-   	}
-   else
-  		fts_test_entry(FTS8722_SELF_TEST_INI,s,v);
-    }
-	
-	udelay(200);
-    ret = fts_enter_test_environment(0);
-    if (ret < 0) {
-        FTS_ERROR("enter normal environment fail");
-    }
-
-#if defined(FTS_ESDCHECK_EN) && (FTS_ESDCHECK_EN)
-    fts_esdcheck_switch(ENABLE);
-#endif
-
-    fts_irq_enable();
-	ito_self_test = 0;
-
-    mutex_unlock(&input_dev->mutex);
-
-    return ret;
-}
-
-#if 0
-static void focal_press_powerkey(void)
-{
-
-
-    FTS_TEST_INFO(" %s POWER KEY event %x press\n", __func__, KEY_POWER);
-    input_report_key(fts_data->input_dev, KEY_POWER, 1);
-    input_sync(fts_data->input_dev);
-
-    FTS_TEST_INFO(" %s POWER KEY event %x release\n", __func__, KEY_POWER);
-    input_report_key(fts_data->input_dev, KEY_POWER, 0);
-    input_sync(fts_data->input_dev);
-	
-}
-#endif
-
-
-/* for proc/touchscreen*/
-
-
-#ifdef FTS_GET_TP_DIFFER
-#define ENTER_WORK_FACTORY_RETRIES              5
-#define FACTORY_TEST_DELAY                      18
-#define FACTORY_TEST_RETRY_DELAY                100
-
-#define FACTORY_REG_CHX_NUM                     0x02
-#define FACTORY_REG_CHY_NUM                     0x03
-#define DEVICE_MODE_ADDR                        0x00
-#define FACTORY_REG_LINE_ADDR                   0x01
-#define FACTORY_REG_RAWDATA_ADDR                0x6A
-#define FACTORY_REG_DATA_SELECT                 0x06
-#define packet                                  128
-
-int fts_raw_enter_factory_mode(void)
-{
-	int ret = 0;
-	u8 mode = 0;
-	int i = 0;
-	int j = 0;
-	u8 addr = DEVICE_MODE_ADDR;
-
-	ret = fts_read(&addr, 1, &mode, 1);
-	if ((ret >= 0) && (0x40 == mode))
-		return 0;
-
-	for (i = 0; i < 5; i++) {
-		ret = fts_write_reg(addr, 0x40);
-		if (ret >= 0) {
-			msleep(FACTORY_TEST_DELAY);
-			for (j = 0; j < 20; j++) {
-				ret = fts_read(&addr, 1, &mode, 1);
-				if ((ret >= 0) && (0x40 == mode)) {
-					FTS_INFO("enter factory mode success");
-					msleep(200);
-					return 0;
-				} else
-					msleep(FACTORY_TEST_DELAY);
-			}
-		}
-		msleep(50);
-	}
-
-	if (i >= 5) {
-		FTS_INFO("Enter factory mode fail");
-		return -EIO;
-	}
-	return 0;
-}
-
-
-static int fts_raw_get_channel_num(u8 tx_rx_reg, u8 *ch_num, u8 ch_num_max)
-{
-	int ret = 0;
-	int i = 0;
-
-	for (i = 0; i < 3; i++) {
-		ret = fts_read(&tx_rx_reg, 1, ch_num, 1);
-		if ((ret < 0) || (*ch_num > ch_num_max)) {
-			msleep(50);
-		} else
-			break;
-	}
-
-	if (i >= 3) {
-		FTS_INFO("get channel num fail");
-		return -EIO;
-	}
-
-	return 0;
-}
-
-
-int fts_raw_start_scan(void)
-{
-	int ret = 0;
-	u8 addr = 0;
-	u8 val = 0;
-	u8 finish_val = 0;
-	int times = 0;
-	addr = DEVICE_MODE_ADDR;
-	val = 0xC0;
-	finish_val = 0x40;
-
-	fts_raw_enter_factory_mode();
-	ret = fts_write_reg(addr, val);
-	if (ret < 0) {
-		FTS_INFO("write start scan mode fail\n");
-		return ret;
-	}
-
-	while (times++ < 50) {
-		msleep(18);
-
-		ret = fts_read(&addr, 1, &val, 1);
-		if ((ret >= 0) && (val == finish_val)) {
-			break;
-		} else
-			FTS_INFO("reg%x=%x,retry:%d", addr, val, times);
-	}
-
-	if (times >= 50) {
-		FTS_INFO("scan timeout\n");
-		return -EIO;
-	}
-	return 0;
-}
-
-
-int fts_raw_read_rawdata(u8 addr, u8 *readbuf, int readlen)
-{
-	int ret = 0;
-	int i = 0;
-	int packet_length = 0;
-	int packet_num = 0;
-	int packet_remainder = 0;
-	int offset = 0;
-	int byte_num = readlen;
-
-	packet_num = byte_num / packet;
-	packet_remainder = byte_num % packet;
-	if (packet_remainder)
-		packet_num++;
-
-	if (byte_num < packet) {
-		packet_length = byte_num;
-	} else {
-		packet_length = packet;
-	}
-	/* FTS_TEST_DBG("packet num:%d, remainder:%d", packet_num, packet_remainder); */
-	ret = fts_read(&addr, 1, &readbuf[offset], packet_length);
-	if (ret < 0) {
-		FTS_INFO("read buffer fail");
-		return ret;
-	}
-	for (i = 1; i < packet_num; i++) {
-		offset += packet_length;
-		if ((i == (packet_num - 1)) && packet_remainder) {
-			packet_length = packet_remainder;
-		}
-
-		ret = fts_read(&addr, 1, &readbuf[offset], packet_length);
-		if (ret < 0) {
-			FTS_INFO("read buffer fail");
-			return ret;
-		}
-	}
-
-	return 0;
-}
-
-static int fts_raw_read(u8 off_addr, u8 off_val, u8 rawdata_addr, int byte_num, int *buf)
-{
-	int ret = 0;
-	int i = 0;
-	u8 *data = NULL;
-
-	/* set line addr or rawdata start addr */
-	ret = fts_write_reg(off_addr, off_val);
-	if (ret < 0) {
-		FTS_INFO("wirte line/start addr fail\n");
-		return ret;
-	}
-
-	data = (u8 *)kzalloc(byte_num * sizeof(u8), GFP_KERNEL);
-	if (NULL == data) {
-		FTS_INFO("mass data buffer malloc fail\n");
-		return -ENOMEM;
-	}
-
-	/* read rawdata buffer */
-	FTS_INFO("mass data len:%d", byte_num);
-	ret = fts_raw_read_rawdata(rawdata_addr, data, byte_num);
-	if (ret < 0) {
-		FTS_INFO("read mass data fail\n");
-		goto read_massdata_err;
-	}
-
-	for (i = 0; i < byte_num; i = i + 2) {
-		buf[i >> 1] = (int)(short)((data[i] << 8) + data[i + 1]);
-	}
-
-	ret = 0;
-read_massdata_err:
-	kfree(data);
-	return ret;
-}
-
-int fts_rawdata_differ(u8 raw_diff, char *buf)
-{
-	u8 val = 0xAD;
-	u8 addr = FACTORY_REG_LINE_ADDR;
-	u8 rawdata_addr = FACTORY_REG_RAWDATA_ADDR;
-	int count = 0;
-	int i = 0;
-	int j = 0;
-	int k = 0;
-	int ret = 0;
-	u8 cmd[2] = {0};
-
-	u8 tx_num = 0;
-	u8 rx_num = 0;
-	int byte_num = 0;
-	int buffer_length = 0;
-	char *tmp_buf = NULL;
-	int *buffer = NULL;
-	struct input_dev *input_dev = fts_data->input_dev;
-
-	mutex_lock(&input_dev->mutex);
-	fts_irq_disable();
-
-	cmd[0] = 0xEE;
-	cmd[1] = 1;
-	fts_write(cmd, 2);
-	fts_raw_enter_factory_mode();
-	ret = fts_test_write_reg(FACTORY_REG_RAWDATA_TEST_EN, 0x01);
-	if (ret < 0) {
-		FTS_TEST_SAVE_ERR("rawdata test enable fail\n");
-		goto read_err;
-	}
-
-	fts_raw_get_channel_num(FACTORY_REG_CHX_NUM, &tx_num, 60);
-	fts_raw_get_channel_num(FACTORY_REG_CHY_NUM, &rx_num, 60);
-	FTS_ERROR("tx_num = %d, rx_num = %d", tx_num, rx_num);
-	cmd[0] = FACTORY_REG_DATA_SELECT;
-	cmd[1] = raw_diff;
-	fts_write(cmd, 2);
-
-	fts_raw_start_scan();
-	byte_num = tx_num * rx_num * 2;
-	buffer_length = (tx_num + 1) * rx_num;
-	buffer_length *= sizeof(int) * 2;
-	FTS_INFO("test buffer length:%d", buffer_length);
-	buffer = (int *)kzalloc(buffer_length, GFP_KERNEL);
-	if (NULL == buffer) {
-		FTS_INFO("test buffer(%d) malloc fail", buffer_length);
-		goto read_err;
-	}
-	memset(buffer, 0, buffer_length);
-
-	tmp_buf = kzalloc(buffer_length, GFP_KERNEL);
-	if (NULL == buffer) {
-		FTS_INFO("test buffer(%d) malloc fail", buffer_length);
-		goto read_err;
-	}
-	memset(tmp_buf, 0, buffer_length);
-	ret = fts_raw_read(addr, val, rawdata_addr, byte_num, buffer);
-	if (ret < 0) {
-		FTS_INFO("read rawdata fail\n");
-		goto read_err;
-	}
-	for (i = 0; i < tx_num; i++) {
-		for (j = 0; j < rx_num; j++) {
-			count += snprintf(tmp_buf + count, PAGE_SIZE, "%4d\t", buffer[k++]);
-		}
-		count += snprintf(tmp_buf + count, PAGE_SIZE, "\n");
-	}
-	if (copy_to_user(buf, tmp_buf, 4096))
-		FTS_INFO("read rawdata fail\n");
-read_err:
-	ret = fts_test_write_reg(FACTORY_REG_RAWDATA_TEST_EN, 0x00);
-	if (ret < 0)
-		FTS_TEST_SAVE_ERR("rawdata test disable fail\n");
-	fts_irq_enable();
-	mutex_unlock(&input_dev->mutex);
-	cmd[0] = DEVICE_MODE_ADDR;
-	cmd[1] = 0x00;
-	ret = fts_write(cmd, 2);
-	cmd[0] = 0xEE;
-	cmd[1] = 0x00;
-	ret = fts_write(cmd, 2);
-	kfree(buffer);
-	kfree(tmp_buf);
-	return count;
-
-}
-
-ssize_t tp_differ_proc_read (struct file *file, char __user *buf, size_t count, loff_t *off)
-{
-	int cnt = 0;
-	FTS_TEST_FUNC_ENTER();
-	if (*off != 0)
-		return 0;
-	cnt = fts_rawdata_differ(1, buf);
-	FTS_INFO("cnt = %d", cnt);
-	*off += cnt;
-	return cnt;
-
-}
-
-ssize_t tp_rawdata_proc_read (struct file *file, char __user *buf, size_t count, loff_t *off)
-{
-	int cnt = 0;
-	FTS_TEST_FUNC_ENTER();
-	if (*off != 0)
-		return 0;
-	cnt = fts_rawdata_differ(0, buf);
-	*off += cnt;
-	return cnt;
-
-}
-
-static const struct file_operations tp_differ_proc_fops = {
-	.owner = THIS_MODULE,
-	.read = tp_differ_proc_read,
-};
-
-static const struct file_operations tp_rawdata_proc_fops = {
-	.owner = THIS_MODULE,
-	.read = tp_rawdata_proc_read,
-};
-
-#if 0
-
-int fts_tp_differ_proc(void)
-{
-	int ret = 0;
-
-	FTS_TEST_FUNC_ENTER();
-	tp_differ_proc = proc_create(FTS_PROC_TP_DIFFER, 0444, NULL, &tp_differ_proc_fops);
-	if (tp_differ_proc == NULL) {
-		FTS_TEST_ERROR("[focal] %s() - ERROR: create fts_tp_differ proc()  failed.",  __func__);
-		ret = -1;
-	}
-	tp_rawdata_proc = proc_create(FTS_PROC_TP_rawdata, 0444, NULL, &tp_rawdata_proc_fops);
-	if (tp_rawdata_proc == NULL) {
-		FTS_TEST_ERROR("[focal] %s() - ERROR: create fts_tp_differ proc()  failed.",  __func__);
-		ret = -1;
-	}
-
-	
-	return ret;
-}
-#endif
-#endif
-
-
-#if 0
-#ifdef FTS_GET_TP_DIFFER
-	ret = fts_tp_differ_proc();
-	if (ret) {
-		FTS_TEST_ERROR("[focal] %s() - ERROR: create fts_tp_differ proc()  failed.",  __func__);
-		}
-#endif
-#endif
-
-
-
-static void *fts_self_test_seq_next(struct seq_file *s, void *v, loff_t *pos)
-{
-	return NULL;
-}
-
-static void fts_self_test_seq_stop(struct seq_file *s, void *v)
-{
-}
-
-static int fts_self_test_seq_read(struct seq_file *s, void *v)
-{
-//for self_test
-	printk("fts_self_test_seq_read  kaoshan start \n");
-	
-
-	fts_self_test(s,v);
-	
-	printk("fts_self_test_seq_read  kaoshan end \n");
-	
-	return 0;
-}
-
-static void *fts_self_test_seq_start(struct seq_file *s, loff_t *pos)
-{
-	if (*pos >= 1)
-		return NULL;
-
-
-	return (void *)((unsigned long) *pos + 1);
-}
-
-static void *black_screen_test_seq_next(struct seq_file *s, void *v, loff_t *pos)
-{
-	return NULL;
-}
-
-static void black_screen_test_seq_stop(struct seq_file *s, void *v)
-{
-}
-static int black_test = 0; 
-
-
-int get_black_screentest_status(void)
-{
-	return black_test;
-}
-
-static int black_screentest_seq_read(struct seq_file *s, void *v)
-{
-//fot black test
-     FTS_TEST_INFO("black_screentest_seq_read  kaoshan start \n");
-     black_test = 1; 
-	 mdelay(50); 
-    // focal_press_powerkey();
-    // mdelay(10);
-    seq_puts(s,"0 errors. All test passed.\n");
-     //fts_self_test(s,v);
-     black_test = 0; 
-     mdelay(10); 
-    // focal_press_powerkey();
-     FTS_TEST_INFO("black_screentest_seq_read  kaoshan end \n");
-     return 0;
-}
-
-static void *black_screen_test_seq_start(struct seq_file *s, loff_t *pos)
-{
-	if (*pos >= 1)
-		return NULL;
-
-
-	return (void *)((unsigned long) *pos + 1);
-}
-
-
-static const struct seq_operations black_screen_test_seq_ops = {
-	.start	= black_screen_test_seq_start,
-	.next	= black_screen_test_seq_next,
-	.stop	= black_screen_test_seq_stop,
-	.show	= black_screentest_seq_read,
-};
-	
-
-static const struct seq_operations fts_self_test_seq_ops = {
-	.start	= fts_self_test_seq_start,
-	.next	= fts_self_test_seq_next,
-	.stop	= fts_self_test_seq_stop,
-	.show	= fts_self_test_seq_read,
-};
-
-static int fts_black_screen_test_open(struct inode *inode, struct file *file)
-{
-    return seq_open(file, &black_screen_test_seq_ops);
-    return 0;
-}
-
-static int fts_proc_baseline_test_open(struct inode *inode, struct file *file)
-{
-	return seq_open(file, &fts_self_test_seq_ops);
-    return 0;
-}
-
-extern int fts_ex_mode_switch(enum _ex_mode mode, u8 value);
-
-static ssize_t fts_oplus_tp_direction_fops_write(struct file *file, const char *buf, size_t count, loff_t *pos)
-{
-	int ret = 0;
-	char buf_tmp[4] = {0};
-	struct fts_ts_data *ts_data = fts_data;
-
-	if (copy_from_user(buf_tmp, buf, count)) {
-		return -EFAULT;
-	}
-
-	FTS_TEST_INFO("%s: ap send %c.\n", __func__, buf_tmp[0]);
-	ret = sscanf(buf_tmp, "%d", &ts_data->oplus_edge_mode);
-	if (ret == 0) {
-		FTS_TEST_ERROR("%s: char to int fail.\n", __func__);
-	}
-
-	if (buf_tmp[0] == '0') {
-		fts_ex_mode_switch(MODE_EDGE, DISABLE);
-		FTS_TEST_INFO("%s: oplus_tp_direction disable\n", __func__);
-	} else if (buf_tmp[0] == '1') {
-		fts_ex_mode_switch(MODE_EDGE, 1);
-		FTS_TEST_INFO("%s: oplus_tp_direction enable, USB PORTS RIGHT\n", __func__);
-	} else if (buf_tmp[0] == '2') {
-		fts_ex_mode_switch(MODE_EDGE, 2);
-		FTS_TEST_INFO("%s: oplus_tp_direction enable, USB PORTS LEFT\n", __func__);
-	} else {
-		FTS_TEST_ERROR("%s: oplus_tp_direction wrong parameter .\n", __func__);
-		return -EINVAL;
-	}
-
-	FTS_TEST_INFO("edge mode:%d", ts_data->oplus_edge_mode);
-
-	return count;
-
-}
-
-
-static ssize_t fts_oplus_tp_direction_fops_read(struct file *file, char __user *buffer, size_t size, loff_t *ppos)
-{
-	int ret =0;
-	int len = 0;
-	u8 val = 0;
-	struct fts_ts_data *ts_data = fts_data;
-	struct input_dev *input_dev = ts_data->input_dev;
-	char oplus_tp_direction_str[50];
-
-	if (*ppos != 0) {
-	    return 0;
-    }
-
-	mutex_lock(&input_dev->mutex);
-	fts_read_reg(FTS_REG_EDGE_MODE_EN, &val);
-
-	len = scnprintf(oplus_tp_direction_str, sizeof(oplus_tp_direction_str),
-	    "Edge Mode:%d,Edge Reg(0x8C):%d\n", ts_data->oplus_edge_mode, val);
-	*ppos += len;
-
-	ret = copy_to_user(buffer, oplus_tp_direction_str, len);
-	if (ret) {
-        FTS_DEBUG("Copy data to user buffer failed %d",
-            ret);
-		return 0;
-    }
-	mutex_unlock(&input_dev->mutex);
-
-	return len;
-}
-
-static const struct file_operations fts_proc_baseline_test_ops = {
-	.owner = THIS_MODULE,
-	.open = fts_proc_baseline_test_open,
-	.read = seq_read,
-	//.write = fts_proc_baseline_write,
-	//.release = seq_release,
-};
-
-
-static const struct file_operations fts_black_screen_test_fops = {
-	.owner = THIS_MODULE,
-	.open = fts_black_screen_test_open,
-	.read = seq_read,
-	//.write = fts_black_screen_test_write,
-	//.release = seq_release,
-};
-
-static struct file_operations fts_oplus_tp_direction_fops = {
-	.owner = THIS_MODULE,
-	.open  = simple_open,
-	.read  = fts_oplus_tp_direction_fops_read,
-	.write = fts_oplus_tp_direction_fops_write,
-};
-
-int FTS_oplus_proc_node_init(void)
-{
-     fts_proc_touchpanel_dir = proc_mkdir(FTS_PROC_TOUCHPANEL_FOLDER, NULL);
-     printk("kaoshan %s %d ###\n",__func__,__LINE__);
-     if (fts_proc_touchpanel_dir == NULL) {
-         FTS_TEST_SAVE_ERR(" %s: fts_proc_touchpanel_dir file create failed!\n", __func__);
-         return -ENOMEM;
-     }
-	 printk("kaoshan %s %d ###\n",__func__,__LINE__);
-     
-     fts_proc_baseline_test_file = proc_create(FTS_PROC_BASELINE_TEST_FILE, (S_IRUGO),fts_proc_touchpanel_dir, &fts_proc_baseline_test_ops);
-     if (fts_proc_baseline_test_file == NULL) {
-         FTS_TEST_SAVE_ERR(" %s: proc baseline_test file create failed!\n", __func__);
-         goto fail_oplus_proc_test_file;
-     }
-     fts_proc_backscreen_baseline_file = proc_create(FTS_PROC_BACKSCREEN_BASELINE_FILE, (S_IRUGO | S_IWUGO), fts_proc_touchpanel_dir, &fts_black_screen_test_fops);
-     if (fts_proc_backscreen_baseline_file == NULL) {
-         FTS_TEST_SAVE_ERR(" %s create proc/touchpanel/blackscreen_test Failed!\n", __func__);
-         goto fail_oplus_proc_baseline_file;
-     }
-
-	fts_proc_oplus_tp_direction = proc_create(FTS_PROC_OPLUS_TP_DIRECTION, (S_IRUGO | S_IWUGO), fts_proc_touchpanel_dir, &fts_oplus_tp_direction_fops);
-	if (fts_proc_oplus_tp_direction == NULL) {
-		FTS_TEST_SAVE_ERR(" %s create proc/touchpanel/oplus_tp_direction Failed!\n", __func__);
-		goto fail_oplus_proc_tp_direction_file;
-	}
-
-
-	fts_proc_debug_infor_dir = proc_mkdir(FTS_PROC_DEBUG_INFO_FOLDER, fts_proc_touchpanel_dir);
-	if (fts_proc_debug_infor_dir!= NULL) {
-		fts_proc_delta_o_file = proc_create(FTS_PROC_DELTA_O_FILE, (S_IWUSR | S_IRUGO),
-									  fts_proc_debug_infor_dir, &tp_differ_proc_fops);
-		if (fts_proc_delta_o_file == NULL) {
-			FTS_TEST_SAVE_ERR(" %s: proc dbg_info file create failed!\n", __func__);
-			goto fail_oplus_proc_delta_file;
-		}
-		fts_proc_data_limit_file = proc_create(FTS_PROC_DATA_LIMIT_FILE, (S_IWUSR | S_IRUGO),
-									  fts_proc_debug_infor_dir, &tp_rawdata_proc_fops);
-		if (fts_proc_data_limit_file == NULL) {
-			FTS_TEST_SAVE_ERR(" %s: proc data_limit file create failed!\n", __func__);
-			goto fail__oplus_proc_litmit_file;
-		}
-	}
-	 
-	return 0;
-fail_oplus_proc_test_file:
-	remove_proc_entry(FTS_PROC_BASELINE_TEST_FILE, fts_proc_touchpanel_dir);	
-fail_oplus_proc_baseline_file:
-	remove_proc_entry(FTS_PROC_BACKSCREEN_BASELINE_FILE, fts_proc_touchpanel_dir);
-fail_oplus_proc_tp_direction_file:
-	remove_proc_entry(FTS_PROC_OPLUS_TP_DIRECTION, fts_proc_touchpanel_dir);
-fail_oplus_proc_delta_file:
-	remove_proc_entry(FTS_PROC_DELTA_O_FILE, fts_proc_debug_infor_dir);
-fail__oplus_proc_litmit_file:
-	remove_proc_entry(FTS_PROC_DATA_LIMIT_FILE, fts_proc_debug_infor_dir);
-
-	return -ENOMEM;
-}
-
-static int OPLUS_proc_node_deinit(void)
-{
-    remove_proc_entry(FTS_PROC_BASELINE_TEST_FILE, fts_proc_touchpanel_dir);	
-    remove_proc_entry(FTS_PROC_BACKSCREEN_BASELINE_FILE, fts_proc_touchpanel_dir);	
-	remove_proc_entry(FTS_PROC_DELTA_O_FILE, fts_proc_debug_infor_dir);
-	remove_proc_entry(FTS_PROC_DATA_LIMIT_FILE, fts_proc_debug_infor_dir);
-	return 0;
-}
-
-
-
-
 static ssize_t fts_test_show(
     struct device *dev, struct device_attribute *attr, char *buf)
 {
-    return -EPERM;
+    struct fts_ts_data *ts_data = fts_data;
+    struct input_dev *input_dev = ts_data->input_dev;
+    ssize_t size = 0;
+
+    mutex_lock(&input_dev->mutex);
+    size += snprintf(buf + size, PAGE_SIZE, "FTS_INI_FILE_PATH:%s\n",
+                     FTS_INI_FILE_PATH);
+    size += snprintf(buf + size, PAGE_SIZE, "FTS_CSV_FILE_NAME:%s\n",
+                     FTS_CSV_FILE_NAME);
+    size += snprintf(buf + size, PAGE_SIZE, "FTS_TXT_FILE_NAME:%s\n",
+                     FTS_TXT_FILE_NAME);
+    mutex_unlock(&input_dev->mutex);
+
+    return size;
 }
 
 static ssize_t fts_test_store(
@@ -2825,7 +2123,7 @@ static ssize_t fts_test_store(
     if (ret < 0) {
         FTS_ERROR("enter test environment fail");
     } else {
-       // fts_test_entry(fwname);
+        fts_test_entry(fwname);
     }
     ret = fts_enter_test_environment(0);
     if (ret < 0) {
@@ -2858,11 +2156,10 @@ static struct attribute_group fts_test_attribute_group = {
 
 static int fts_test_func_init(struct fts_ts_data *ts_data)
 {
- //   int i = 0;
-  //  int j = 0;
-   // int ic_stype = ts_data->ic_info.ids.type;
+    int i = 0;
+    int j = 0;
+    u16 ic_stype = ts_data->ic_info.ids.type;
     struct test_funcs *func = test_func_list[0];
-    struct test_funcs *func1 = test_func_list_fts8722[0];
     int func_count = sizeof(test_func_list) / sizeof(test_func_list[0]);
 
     FTS_TEST_INFO("init test function");
@@ -2876,30 +2173,15 @@ static int fts_test_func_init(struct fts_ts_data *ts_data)
         FTS_TEST_ERROR("malloc memory for test fail");
         return -ENOMEM;
     }
-if(ts_data->ic_type == IC_TYPE_FT8006S_AA )
-{
-	 fts_ftest->func = func;
-	   printk("kaoshan %s %d \n",__func__,__LINE__);
-}
-else if(ts_data->ic_type == IC_TYPE_FT8722 )
-{
-	 fts_ftest->func = func1;
-	    printk("kaoshan %s %d \n",__func__,__LINE__);
-}
 
-#if 0
-    if (1 == func_count) {
-        fts_ftest->func = func;
-    } else {
-        for (i = 0; i < func_count; i++) {
-            func = test_func_list[i];
-            for (j = 0; j < FTX_MAX_COMPATIBLE_TYPE; j++) {
-                if (0 == func->ctype[j])
-                    break;
-                else if (func->ctype[j] == ic_stype) {
-                    FTS_TEST_INFO("match test function,type:%x", (int)func->ctype[j]);
-                    fts_ftest->func = func;
-                }
+    for (i = 0; i < func_count; i++) {
+        func = test_func_list[i];
+        for (j = 0; j < FTS_MAX_COMPATIBLE_TYPE; j++) {
+            if (0 == func->ctype[j])
+                break;
+            else if (func->ctype[j] == ic_stype) {
+                FTS_TEST_INFO("match test function,type:%x", (int)func->ctype[j]);
+                fts_ftest->func = func;
             }
         }
     }
@@ -2907,20 +2189,14 @@ else if(ts_data->ic_type == IC_TYPE_FT8722 )
         FTS_TEST_ERROR("no test function match, can't test");
         return -ENODATA;
     }
-	#endif
 
     fts_ftest->ts_data = fts_data;
     return 0;
 }
 
-
-
-
-
 int fts_test_init(struct fts_ts_data *ts_data)
 {
     int ret = 0;
-	printk("kaoshan %s %d ###\n",__func__,__LINE__);
 
     FTS_TEST_FUNC_ENTER();
     /* get test function, must be the first step */
@@ -2929,11 +2205,7 @@ int fts_test_init(struct fts_ts_data *ts_data)
         FTS_TEST_SAVE_ERR("test functions init fail");
         return ret;
     }
-   
-	
-	if(!ret)
-		return ret;
-	printk("kaoshan %s %d ###\n",__func__,__LINE__);
+
     ret = sysfs_create_group(&ts_data->dev->kobj, &fts_test_attribute_group);
     if (0 != ret) {
         FTS_TEST_ERROR("sysfs(test) create fail");
@@ -2949,7 +2221,6 @@ int fts_test_init(struct fts_ts_data *ts_data)
 int fts_test_exit(struct fts_ts_data *ts_data)
 {
     FTS_TEST_FUNC_ENTER();
-	OPLUS_proc_node_deinit();
 
     sysfs_remove_group(&ts_data->dev->kobj, &fts_test_attribute_group);
     fts_free(fts_ftest);

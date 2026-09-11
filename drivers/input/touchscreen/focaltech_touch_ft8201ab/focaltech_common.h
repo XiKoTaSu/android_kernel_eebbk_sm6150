@@ -36,7 +36,7 @@
 /*****************************************************************************
 * Macro definitions using #define
 *****************************************************************************/
-#define FTS_DRIVER_VERSION                  "Focaltech V3.2.1 20200707"
+#define FTS_DRIVER_VERSION                  "Focaltech V3.3 20201229"
 
 #define BYTE_OFF_0(x)           (u8)((x) & 0xFF)
 #define BYTE_OFF_8(x)           (u8)(((x) >> 8) & 0xFF)
@@ -54,10 +54,11 @@
 #define FTS_CHIP_IDC            ((FTS_CHIP_TYPE & FLAGBIT(FLAG_IDC_BIT)) == FLAGBIT(FLAG_IDC_BIT))
 #define FTS_HID_SUPPORTTED      ((FTS_CHIP_TYPE & FLAGBIT(FLAG_HID_BIT)) == FLAGBIT(FLAG_HID_BIT))
 
-#define FTS_CHIP_TYPE_MAPPING { \
-    {0x19, 0x86, 0x32, 0x86, 0x32, 0x86, 0xC2, 0x00, 0x00}, \
-    {0x20, 0x87, 0x22, 0x87, 0x22, 0x87, 0xA2, 0x00, 0x00}, \
-}
+#define FTS_MAX_CHIP_IDS        8
+
+#define FTS_CHIP_TYPE_MAPPING {{0x10, 0x82, 0x01, 0x80, 0x06, 0x80, 0xC6, 0x80, 0xB6}, {0x11, 0x82, 0x03, 0x82, 0x03, 0x82, 0x03, 0x82, 0x03}}
+
+#define FTS_CHIP_ID_MAPPING {{0x10, {0x821A, 0x8006}}, {0x11, {0x8203}}}
 
 #define FILE_NAME_LENGTH                    128
 #define ENABLE                              1
@@ -93,18 +94,13 @@
 #define FTS_REG_GLOVE_MODE_EN               0xC0
 #define FTS_REG_COVER_MODE_EN               0xC1
 #define FTS_REG_CHARGER_MODE_EN             0x8B
-
-#define FTS_REG_EARPHONE_MODE_EN            0xC3
-#define FTS_REG_EDGE_MODE_EN           		0x8C// USB ports Right: 1, USB ports Left: 2
-
 #define FTS_REG_GESTURE_EN                  0xD0
 #define FTS_REG_GESTURE_OUTPUT_ADDRESS      0xD3
 #define FTS_REG_MODULE_ID                   0xE3
 #define FTS_REG_LIC_VER                     0xE4
 #define FTS_REG_ESD_SATURATE                0xED
 
-#define FTS_SYSFS_ECHO_ON(buf)      (buf[0] == '1' || buf[0] == '2')
-
+#define FTS_SYSFS_ECHO_ON(buf)      (buf[0] == '1')
 #define FTS_SYSFS_ECHO_OFF(buf)     (buf[0] == '0')
 
 #define kfree_safe(pbuf) do {\
@@ -127,7 +123,7 @@
 * Global variable or extern global variabls/functions
 *****************************************************************************/
 struct ft_chip_t {
-    u64 type;
+    u16 type;
     u8 chip_idh;
     u8 chip_idl;
     u8 rom_idh;
@@ -138,10 +134,16 @@ struct ft_chip_t {
     u8 bl_idl;
 };
 
+struct ft_chip_id_t {
+    u16 type;
+    u16 chip_ids[FTS_MAX_CHIP_IDS];
+};
+
 struct ts_ic_info {
     bool is_incell;
     bool hid_supported;
     struct ft_chip_t ids;
+    struct ft_chip_id_t cid;
 };
 
 /*****************************************************************************

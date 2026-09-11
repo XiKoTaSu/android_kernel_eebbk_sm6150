@@ -1,17 +1,12 @@
-#
 # Makefile for the focaltech touchscreen drivers.
-#
+# EEBBK A3: single module (focaltech_touch.ko) - the per-object obj- lines
+# would split the driver into many modules when built as =m.
 
-# Each configuration option enables a list of files.
+obj-$(CONFIG_TOUCHSCREEN_FTS)	+=  focaltech_touch.o
 
-obj-$(CONFIG_TOUCHSCREEN_FTS)	+=  focaltech_core.o
-obj-$(CONFIG_TOUCHSCREEN_FTS)	+=  focaltech_ex_fun.o
-obj-$(CONFIG_TOUCHSCREEN_FTS)	+=  focaltech_ex_mode.o
-obj-$(CONFIG_TOUCHSCREEN_FTS)	+=  focaltech_flash.o
-obj-$(CONFIG_TOUCHSCREEN_FTS)	+=  focaltech_gesture.o
-obj-$(CONFIG_TOUCHSCREEN_FTS)	+=  focaltech_esdcheck.o
-obj-$(CONFIG_TOUCHSCREEN_FTS)   +=  focaltech_i2c.o
-obj-$(CONFIG_TOUCHSCREEN_FTS)   +=  focaltech_point_report_check.o
-obj-$(CONFIG_TOUCHSCREEN_FTS)   +=  focaltech_flash/
-obj-$(CONFIG_TOUCHSCREEN_FTS)   +=  focaltech_test/
-
+focaltech_touch-objs := focaltech_core.o focaltech_ex_fun.o \
+	focaltech_ex_mode.o focaltech_gesture.o focaltech_esdcheck.o \
+	focaltech_point_report_check.o focaltech_flash.o focaltech_i2c.o \
+	focaltech_test/focaltech_test.o focaltech_test/focaltech_test_ini.o \
+	focaltech_test/supported_ic/focaltech_test_ft8006s_ab.o \
+	focaltech_test/supported_ic/focaltech_test_ft8722.o

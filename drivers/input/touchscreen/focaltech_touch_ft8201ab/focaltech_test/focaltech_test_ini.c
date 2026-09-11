@@ -15,7 +15,7 @@
 /*****************************************************************************
 * Private constant and macro definitions using #define
 *****************************************************************************/
-#define FTS_INI_REQUEST_SUPPORT             1
+#define FTS_INI_REQUEST_SUPPORT              0
 
 struct ini_ic_type ic_types[] = {
     {"FT5X46",  0x54000002},
@@ -96,7 +96,6 @@ struct ini_ic_type ic_types[] = {
 
     {"FT8736",  0x83000006},
 
-    {"FT8006M", 0x87000007},
     {"FT8201",  0x87010010},
     {"FT7250",  0x8702001A},
 
@@ -153,6 +152,8 @@ struct ini_ic_type ic_types[] = {
     {"FT5946",  0x590D0087},
 
     {"FT3658U", 0x5A010088},
+
+    {"FT2388",  0x9D00001E},
 };
 
 /*****************************************************************************
@@ -183,7 +184,7 @@ static int fts_strncmp(const char *cs, const char *ct, int count)
     return 0;
 }
 
-static int isspace(int x)
+static int fts_isspace(int x)
 {
     if (x == ' ' || x == '\t' || x == '\n' || x == '\f' || x == '\b' || x == '\r')
         return 1;
@@ -191,7 +192,7 @@ static int isspace(int x)
         return 0;
 }
 
-static int isdigit(int x)
+static int fts_isdigit(int x)
 {
     if (x <= '9' && x >= '0')
         return 1;
@@ -205,14 +206,14 @@ static long fts_atol(char *nptr)
     long total; /* current total */
     int sign; /* if ''-'', then negative, otherwise positive */
     /* skip whitespace */
-    while ( isspace((int)(unsigned char)*nptr) )
+    while ( fts_isspace((int)(unsigned char)*nptr) )
         ++nptr;
     c = (int)(unsigned char) * nptr++;
     sign = c; /* save sign indication */
     if (c == '-' || c == '+')
         c = (int)(unsigned char) * nptr++; /* skip sign */
     total = 0;
-    while (isdigit(c)) {
+    while (fts_isdigit(c)) {
         total = 10 * total + (c - '0'); /* accumulate digit */
         c = (int)(unsigned char) * nptr++; /* get next char */
     }
@@ -763,7 +764,7 @@ static void get_detail_threshold(char *key_name, bool is_prex, int *thr, int nod
                                    key_name, i, thr_pos, node_num);
                     break;
                 }
-                thr[thr_pos] = (short)(fts_atoi(str_tmp));
+                thr[thr_pos] = (int)(fts_atoi(str_tmp));
                 index = 0;
                 memset(str_tmp, 0x00, sizeof(str_tmp));
                 k++;
@@ -917,13 +918,16 @@ static void print_thr_incell(void)
     FTS_TEST_DBG("lcdnoise_frame:%d", thr->basic.lcdnoise_frame);
     FTS_TEST_DBG("lcdnoise_coefficient:%d", thr->basic.lcdnoise_coefficient);
     FTS_TEST_DBG("lcdnoise_coefficient_vkey:%d", thr->basic.lcdnoise_coefficient_vkey);
+    FTS_TEST_DBG("open_diff_min:%d", thr->basic.open_diff_min);
+    FTS_TEST_DBG("open_diff_max:%d", thr->basic.open_diff_max);
 
     FTS_TEST_DBG("open_nmos:%d", thr->basic.open_nmos);
     FTS_TEST_DBG("keyshort_k1:%d", thr->basic.keyshort_k1);
     FTS_TEST_DBG("keyshort_cb_max:%d", thr->basic.keyshort_cb_max);
     FTS_TEST_DBG("rawdata2_min:%d", thr->basic.rawdata2_min);
     FTS_TEST_DBG("rawdata2_max:%d", thr->basic.rawdata2_max);
-
+    FTS_TEST_DBG("mux_open_cb_min:%d", thr->basic.mux_open_cb_min);
+    FTS_TEST_DBG("open_delta_V:%d", thr->basic.open_delta_V);
 
     print_buffer(thr->rawdata_min, tdata->node.node_num, tdata->node.rx_num);
     print_buffer(thr->rawdata_max, tdata->node.node_num, tdata->node.rx_num);
@@ -1103,6 +1107,8 @@ static void print_thr_mc_sc(void)
     print_buffer(thr->rawdata_h_max, tdata->node.node_num, tdata->node.rx_num);
     print_buffer(thr->rawdata_l_min, tdata->node.node_num, tdata->node.rx_num);
     print_buffer(thr->rawdata_l_max, tdata->node.node_num, tdata->node.rx_num);
+    print_buffer(thr->tx_linearity_max, tdata->node.node_num, tdata->node.rx_num);
+    print_buffer(thr->rx_linearity_max, tdata->node.node_num, tdata->node.rx_num);
     print_buffer(thr->scap_cb_off_min, tdata->sc_node.node_num, tdata->sc_node.rx_num);
     print_buffer(thr->scap_cb_off_max, tdata->sc_node.node_num, tdata->sc_node.rx_num);
     print_buffer(thr->scap_cb_on_min, tdata->sc_node.node_num, tdata->sc_node.rx_num);
@@ -1372,7 +1378,7 @@ int fts_test_get_testparam_from_ini(char *config_name)
         goto get_ini_err;
     }
     memset(ini->tmp, 0, sizeof(struct ini_keyword) * MAX_KEYWORD_NUM);
-    printk("kaoshan config_name= %s \n",__func__,__LINE__);
+
     /* parse ini data to get keyword name&value */
     ret = ini_init_inidata(ini);
     if (ret < 0) {
